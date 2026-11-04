@@ -4,7 +4,7 @@ COMFY_URL (default http://127.0.0.1:8188) may point at ComfyUI on another machin
 through /upload/image and results come back through /view, so no shared folder is needed.
 Standard library only.
 """
-import json, os, time, uuid, mimetypes, urllib.request, urllib.parse
+import json, os, time, uuid, mimetypes, urllib.request, urllib.parse, urllib.error
 
 URL = os.environ.get('COMFY_URL', 'http://127.0.0.1:8188').rstrip('/')
 CLIENT = str(uuid.uuid4())
@@ -14,8 +14,12 @@ SUB = 'digital_human'          # input/output subfolder, keeps this skill's file
 def call(path, data=None, timeout=60):
     req = urllib.request.Request(URL + path, data=json.dumps(data).encode() if data is not None else None,
                                  headers={'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', 'replace')[:2000]
+        raise RuntimeError(f'{path} -> HTTP {e.code}: {body}') from None
 
 
 def upload(path):

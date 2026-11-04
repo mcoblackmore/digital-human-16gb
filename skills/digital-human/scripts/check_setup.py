@@ -10,17 +10,25 @@ import os, shutil, importlib.util
 import comfy
 
 MODELS = [  # (ComfyUI model folder, file, what it is)
-    ('diffusion_models', 'qwen_image_edit_2511_int8_convrot.safetensors', 'face: Qwen-Image-Edit-2511'),
+    ('unet_gguf', 'qwen-image-edit-2511-Q5_K_M.gguf', 'face: Qwen-Image-Edit-2511 GGUF Q5_K_M'),
     ('text_encoders', 'qwen_2.5_vl_7b_fp8_scaled.safetensors', 'face: Qwen2.5-VL text encoder'),
     ('vae', 'qwen_image_vae.safetensors', 'face: VAE'),
     ('loras', 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors', 'face: 4-step LoRA'),
-    ('diffusion_models', 'Wan2_1-I2V-14B-480P_fp8_e4m3fn.safetensors', 'talk: Wan2.1 I2V 14B'),
+    ('unet_gguf', 'wan2.1-i2v-14b-480p-Q5_K_M.gguf', 'talk: Wan2.1 I2V 14B GGUF Q5_K_M'),
     ('diffusion_models', 'Wan2_1-InfiniTetalk-Single_fp16.safetensors', 'talk: InfiniteTalk'),
-    ('text_encoders', 'umt5-xxl-enc-bf16.safetensors', 'talk: umt5 text encoder'),
+    ('text_encoders', 'umt5-xxl-enc-fp8_e4m3fn.safetensors', 'talk: umt5 text encoder fp8'),
     ('vae', 'Wan2_1_VAE_bf16.safetensors', 'talk: Wan VAE'),
     ('loras', 'lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors', 'talk: 4-step LoRA'),
     ('clip_vision', 'clip_vision_h.safetensors', 'talk: CLIP vision'),
     ('wav2vec2', 'wav2vec2-chinese-base_fp16.safetensors', 'talk: chinese wav2vec2'),
+    ('diffusion_models', 'minimax_h3_ref2va_pruned_int8_convrot.safetensors', 'talk16: MiniMax H3 ref2va'),
+    ('text_encoders', 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', 'talk16: H3 text encoder'),
+    ('vae', 'minimax_h3_video_vae_fp16.safetensors', 'talk16: H3 video VAE'),
+    ('vae', 'minimax_h3_audio_vae_fp32.safetensors', 'talk16: H3 audio VAE'),
+    ('loras', 'minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors', 'talk16: H3 4-step LoRA'),
+    ('latent_upscale_models', 'minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors', 'talk16: H3 latent upscaler'),
+    ('SEEDVR2', 'seedvr2_ema_3b_fp8_e4m3fn.safetensors', 'upscale: SeedVR2 3B fp8'),
+    ('SEEDVR2', 'ema_vae_fp16.safetensors', 'upscale: SeedVR2 VAE'),
 ]
 NODES = {  # node class -> where it comes from
     'TextEncodeQwenImageEditPlus': 'ComfyUI itself (update ComfyUI)',
@@ -33,6 +41,10 @@ NODES = {  # node class -> where it comes from
     'GetImageSizeAndCount': 'ComfyUI-KJNodes',
     'VHS_LoadVideo': 'ComfyUI-VideoHelperSuite',
     'VHS_VideoCombine': 'ComfyUI-VideoHelperSuite',
+    'MiniMaxH3ReferenceToVideo': 'ComfyUI itself (update ComfyUI)',
+    'PixaromaH3AudioSync': 'ComfyUI-Pixaroma',
+    'PixaromaH3LatentUpscale': 'ComfyUI-Pixaroma',
+    'SeedVR2VideoUpscaler': 'ComfyUI-SeedVR2_VideoUpscaler',
 }
 PACKAGES = {  # import name -> pip name, step
     'cv2': ('opencv-python', 'face checks, 底稿'), 'insightface': ('insightface', 'face checks'),

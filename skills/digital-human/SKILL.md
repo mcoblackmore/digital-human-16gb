@@ -57,6 +57,30 @@ description: 用开源模型在本地做一个 AI 数字人主播：用文字写
 
 ## 第 3 步：开口说话
 
+两条路，按显存选：
+
+- **16 GB 及以下显存 → 用 3A（MiniMax H3）**：小显存下 Wan 的 block swap 会把权重来回搬，GPU 空转，慢到不可用。
+- **24 GB 以上显存 → 用 3B（Wan + InfiniteTalk）**：这是原始方案，底稿约束头动，最稳。
+
+### 3A. MiniMax H3 ref2va + Pixaroma H3 Audio Sync（16 GB 显存实测可用）
+
+工具：`h3_lipsync.py`（本仓库新增），插件 `ComfyUI-Pixaroma`，模型见 `reference/models.md`。
+
+1. **一句话生成。** 不需要底稿视频：
+   `H3_STEPS=4 H3_LORA=minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors H3_LENGTH=192 python h3_lipsync.py 定稿.png 配音.wav talk/ "英文提示词" 1056 608`
+   `H3_LENGTH` 是帧数（24 fps，17 的倍数 + 5，192 = 8 秒）。
+2. **音频必须走 `PixaromaH3AudioSync`。** 塞进 `MiniMaxH3ReferenceToVideo` 的 `ref_audios` 只会影响音色，模型会自己编语音和时序（实测嘴型与配音相关性 0.04）。AudioSync 才把音频锁进渲染。
+3. **它说的是克隆音色，不是原录音。** 内容与台词一致、音色接近参考音频，但波形不同（实测相关 0.04、频谱重合 0.76）。要原录音逐字一致，只能走 3B。
+4. **分辨率上限。** 16 GB 卡：864×480（241 秒/8 秒）、1056×608（471 秒）可跑；**1280×736 直接渲染会把 ComfyUI 打崩**（进程级 OOM），1056→1280 的 latent 放大也会崩。
+5. **嘴动幅度。** 比 Wan 版小。提示词里写 `clear, pronounced lip movements: his mouth opens wide and closes fully on every syllable` 能加大一些。
+6. **镜头会自己动。** H3 生成的画面里镜头会轻微漂移/呼吸。提示词写 `locked-off tripod, completely static frame, no pan, no zoom, no dolly` 能减弱到可接受的程度（实测中心抖动 11 px 左右，观感可接受）。
+   **不要用整帧变换去"修"**：`face_lock.py` 试过两种模式（等比缩放锁定、只平移锁定），都会因为 H3 本身的镜头前后微动而被放大成明显的呼吸式推拉，比原片更假。实测结论：保持原始输出。
+   真要完全静止，得用 24 GB 以上显存走 Wan + InfiniteTalk 的底稿路线（3B），底稿本身是静止的。
+7. **要 1280 就后置放大**，且**只用 1.2× 左右**（`upscale_seedvr2.py 输入.mp4 输出目录 736`）。5× 放大（448→2240）会让嘴部明显飘。
+8. **ComfyUI 启动参数**（缺一不可）：`--disable-cuda-malloc --disable-dynamic-vram --disable-nvml-pressure --disable-pinned-memory`。32 GB 内存还要把页面文件设到 32–64 GB，否则报 `os error 1455`。
+
+### 3B. Wan + InfiniteTalk（24 GB 以上显存）
+
 工具：`still_source.py` 做底稿（不用模型），`infinitetalk_run.py` 提交 InfiniteTalk。
 
 1. **底稿。** 把定稿图做成一段轻轻晃动、闭着嘴、没有声音的视频，长度是这句台词的时长加 0.5 秒：`still_source.py 定稿.png breathing_L01.mp4 6.8`
@@ -71,7 +95,25 @@ description: 用开源模型在本地做一个 AI 数字人主播：用文字写
    电脑上没有 `ffmpeg` 命令的话，用 imageio-ffmpeg 自带的那个：`python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"` 会打出它的路径。
 
 5. **检查。** 抽开头、中间、结尾三帧，跑 `face_check.py --ref 定稿.png`，低于 0.80 的换个 seed 重跑。嘴型给人看一遍。
-6. **显存不够。** 我们在 Spark 上量到，896×512 生成时显存峰值约 24 GB。所以 24 G 显存的显卡要在 WanVideoWrapper 里给模型加载节点接一个 block swap 节点，或者换更小的压缩模型，会更慢。
+6. **显存不够。** 我们在 Spark 上量到，896×512 生成时显存峰值约 24 GB。所以 24 G 显存的显卡要在 WanVideoWrapper 里给模型加载节点接一个 block swap 节点，或者换更小的压缩模型，会更慢。**16 GB 卡上即使 swap 30–40 层也会 OOM 或 GPU 空转**，直接走 3A。
+
+
+## 实测选型（16 GB 显存，RTX 4060 Ti / 32 GB 内存）
+
+同一句 7.4 秒的配音，两条路都跑通过，各有取舍：
+
+| 路线 | 分辨率 | 耗时 | 嘴型 | 镜头 | 声音 |
+|---|---|---|---|---|---|
+| **Wan + InfiniteTalk**（3B） | 896×512 | 981 秒 | 跟配音 | 底稿约束，最稳 | **就是原录音** |
+| **MiniMax H3**（3A） | 1056×608 | 460 秒 | 跟配音 | 会轻微漂移（提示词可减弱） | 克隆音色，非原录音 |
+
+选择建议：
+
+- **要 2 倍速度、要更高分辨率、能接受音色克隆** → 3A（H3，1056×608）
+- **要原录音逐字一致、要镜头完全静止** → 3B（Wan，896×512）
+- 两条都别超：Wan 上 896×512 是上限；H3 上 1056×608 是上限（1152×640 起必崩）
+
+**整段长片不要指望一次跑完**：H3 单段超过 ~192 帧（8 秒）会崩 ComfyUI；Wan 的 198 帧也要开 VAE 分块。10 句台词 = 10 次渲染，16 GB 卡上合计 1 小时以上，先跟人确认值不值得。
 
 ## 检查标准
 

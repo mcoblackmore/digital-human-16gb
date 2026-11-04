@@ -1,95 +1,142 @@
-# 王渔鱼是怎么做出来的：资料页
+# AI 数字人 · 16 GB 显存复刻版
 
-王渔鱼是 Builder² 的 AI 数字人主播。她的脸、声音和说话视频，全部用开源模型在一台电脑上本地生成，人通过 Claude Code 指挥整个过程。这一页放视频里提到的工具、模型、下载地址和硬件，还有我们打包好的 Claude Code skill。
+在 **RTX 4060 Ti 16 GB / 32 GB 内存** 的 Windows 机器上，把 [builder2ai/builder2-digital-human](https://github.com/builder2ai/builder2-digital-human) 的流程完整跑通，并把大显存方案换成小显存方案。
 
-- 视频：YouTube 频道 https://www.youtube.com/@builder2ai ，第 1 期 https://www.youtube.com/watch?v=jbGZmQ7aktI
-- 王渔鱼是 AI 数字人，不是真人。视频里的人物、声音和画面都是 AI 生成的。
+原 skill 在 DGX Spark（128 GB 统一内存）上验证；本仓库记录 16 GB 显存上的**实测替换、踩坑与最终配置**。
 
-## 数字人制作 skill
+## 硬件实测环境
 
-skill 就是写给 Claude Code 的一份说明书，连着脚本和工作流一起。里面写的就是视频里那条路：用文字写脸、用文字设计声音、让它开口说话，每一步该量什么、量到多少算过关。里面没有任何真人的脸和声音，你的数字人要从文字开始写。
+| 项 | 值 |
+|---|---|
+| GPU | RTX 4060 Ti 16 GB |
+| 内存 | 32 GB（页面文件需 32–64 GB） |
+| 系统 | Windows + ComfyUI 便携版（0.43.0） |
+| Python | 3.13（ComfyUI 内置）/ 3.12（外部脚本） |
+
+## 三条链路
+
+### 1. 做脸：Qwen-Image-Edit-2511
+
+| 原方案 | 本仓库 |
+|---|---|
+| int8 20.5 GB | **GGUF Q5_K_M 15.4 GB**（`UnetLoaderGGUF`） |
+| — | 4 步 Lightning LoRA 不变 |
+
+- 出图 **39–75 秒/张**，同句提示词换 4–6 个 seed 挑
+- 锁脸：定稿脸当 `image2`，提示词写「脸和图 2 保持一模一样」，`face_check.py --ref` 相似度 ≥ 0.80（实测 0.889–0.919）
+- 16:9：`outpaint_169.py prep/merge`，只补两侧、中间原样贴回
+
+### 2. 声音：Qwen3-TTS 克隆
+
+- 录音 20–40 秒 + 原文 → `voice_profile.py 录音.wav "原文" voice.pt` 存成声音档案
+- 之后每句 `tts_lines.py` 用这个档案念，**8 秒/句**
+- 校验：`tts_qc.py`（CAM++ 同人判定 ≥ 0.6，Whisper 错字率 ≤ 0.05）
+
+### 3A. 说话（16 GB 路线）：MiniMax H3 ref2va + Pixaroma H3 Audio Sync
+
+| 项 | 值 |
+|---|---|
+| 主模型 | `minimax_h3_ref2va_pruned_int8_convrot.safetensors` 19.5 GB |
+| 音频锁定 | **`PixaromaH3AudioSync` 节点**（塞进 `ref_audios` 只会影响音色，模型会自己编语音） |
+| 加速 | `minimax_h3_ref2v_turbo_4step` LoRA，4 步 |
+| 实测 | **1056×608 / 8 秒视频 = 460 秒** |
+| 上限 | 1056×608 稳定；1152×640 起必崩 |
+| 声音 | 克隆音色（内容一致，非原录音波形） |
+
+```bat
+set COMFY_URL=http://127.0.0.1:8189
+set H3_STEPS=4
+set H3_LORA=minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors
+set H3_LENGTH=192
+python scripts\h3_lipsync.py 定稿脸.png 配音.wav 输出目录 "英文提示词" 1056 608
+```
+
+### 3B. 说话（24 GB+ 路线）：Wan + InfiniteTalk
+
+| 项 | 值 |
+|---|---|
+| 主模型 | `wan2.1-i2v-14b-480p-Q3_K_M.gguf`（Q5 会 OOM）+ InfiniteTalk 5.1 GB |
+| 文本编码器 | `umt5-xxl-enc-fp8_e4m3fn`，且 **`device: cpu`**（省 6.7 GB 显存） |
+| block swap | `IT_SWAP=24`（40 层里搬 24 层到内存） |
+| 实测 | **896×512 / 8 秒视频 = 981 秒** |
+| 声音 | **就是原录音**，逐字一致 |
+
+```bat
+set IT_MODEL=wan2.1-i2v-14b-480p-Q3_K_M.gguf
+set IT_W=896
+set IT_H=512
+set IT_SWAP=24
+python scripts\infinitetalk_run.py - 配音.wav 输出目录
+```
+
+## 选型对照
+
+| 路线 | 分辨率 | 8 秒耗时 | 嘴型 | 镜头 | 声音 |
+|---|---|---|---|---|---|
+| Wan + InfiniteTalk | 896×512 | 981 秒 | 跟配音 | 底稿约束，最稳 | **原录音** |
+| MiniMax H3 | 1056×608 | 460 秒 | 跟配音 | 轻微漂移 | 克隆音色 |
+| H3 + SeedVR2 1.2× | 1278×736 | 1110 秒 | 跟配音 | 轻微漂移 | 克隆音色 |
+
+## 目录结构
 
 ```
 skills/digital-human/
-├── SKILL.md            给 Claude Code 的说明书：步骤、检查标准、怎么跟人配合
-├── reference/models.md 模型文件、插件、Python 环境、硬件
-├── scripts/            改图、量脸、造声音、配音质检、做底稿、生成说话视频
-└── workflows/          ComfyUI 画布版：形象编辑、说话视频
+├── SKILL.md                     # 完整流程（3A / 3B 双路线）
+├── reference/models.md          # 模型清单、下载地址、小显存系统设置
+├── scripts/
+│   ├── check_setup.py           # 开工前自检（ComfyUI / 节点 / 模型 / Python 包）
+│   ├── comfy.py                 # ComfyUI HTTP 客户端（上传、提交、下载）
+│   ├── qwen_edit.py             # 做脸（API 图，GGUF + Lightning 4 步）
+│   ├── face_check.py            # 人脸量化（张数、头歪、脸占比、相似度）
+│   ├── contact_sheet.py         # 拼对比图
+│   ├── crop_face.py / level_head.py / outpaint_169.py
+│   ├── voice_design.py / voice_knobs.py / voice_profile.py / tts_lines.py / tts_qc.py
+│   ├── still_source.py          # 底稿视频（轻晃闭嘴，不用模型）
+│   ├── infinitetalk_run.py      # Wan + InfiniteTalk（3B 路线）
+│   ├── h3_lipsync.py            # MiniMax H3 + AudioSync（3A 路线）
+│   ├── upscale_seedvr2.py       # SeedVR2 后置放大
+│   └── produce_episode.py       # 整段编排（配音 → 逐句渲染 → 拼接）
+└── workflows/                   # ComfyUI 画布版工作流
 ```
 
-**安装**
+## 模型路径（ComfyUI/models/）
 
-1. 下载这个仓库（右上角 Code → Download ZIP，或者 `git clone`）。
-2. 把 `skills/digital-human` 整个文件夹复制到 Claude Code 的 skills 文件夹：
-   - 只给自己用：`~/.claude/skills/`（Windows 是 `C:\Users\你的用户名\.claude\skills\`）
-   - 只给某个项目用：项目里的 `.claude/skills/`
-3. 新开一个 Claude Code 会话，它自己就认得。
+| 用途 | 路径 | 大小 |
+|---|---|---|
+| 做脸主模型 | `diffusion_models/gguf/qwen-image-edit-2511-Q5_K_M.gguf` | 15.4 GB |
+| 做脸编码器 | `text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors` | 8.7 GB |
+| 做脸 LoRA | `loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors` | 0.8 GB |
+| H3 主模型 | `diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors` | 19.5 GB |
+| H3 编码器 | `text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | 14.6 GB |
+| H3 VAE | `vae/minimax_h3_video_vae_fp16.safetensors` + `minimax_h3_audio_vae_fp32.safetensors` | 5.4 GB |
+| H3 LoRA | `loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors` | 1.9 GB |
+| Wan 主模型 | `diffusion_models/gguf/wan2.1-i2v-14b-480p-Q3_K_M.gguf` | 8.6 GB |
+| Wan 编码器 | `text_encoders/umt5-xxl-enc-fp8_e4m3fn.safetensors` | 6.7 GB |
+| 放大 | `SEEDVR2/seedvr2_ema_3b_fp8_e4m3fn.safetensors` | 3.4 GB |
 
-**前提**：电脑上已经装好 ComfyUI 和这些模型，需要英伟达显卡，显存越大越好。缺什么，skill 第一步会帮你查出来，下载地址在 [reference/models.md](skills/digital-human/reference/models.md)。
+完整清单与下载地址见 `skills/digital-human/reference/models.md`。
 
-**用法**：直接跟 Claude Code 说你想要什么，比如「我想做一个三十岁左右、说话温和的男主播」。它会先查模型齐不齐，再一步一步做，每一步拼好对比图让你挑。
+## 必须的启动参数
 
-我们只在 NVIDIA DGX Spark 上跑通过，别的电脑没有实测。
+```bat
+python main.py --windows-standalone-build --enable-manager --listen 0.0.0.0 --port 8189 ^
+  --disable-cuda-malloc --disable-dynamic-vram --disable-nvml-pressure --disable-pinned-memory
+```
 
-## 用到的工具和模型
+- 前三个：新版 CUDA 分配器 / DynamicVRAM 会和 WanVideoWrapper、H3 的显存策略打架
+- `--disable-pinned-memory`：常驻内存 21.5 GB → 6.9 GB（32 GB 内存必需）
+- 页面文件设 32–64 GB，否则报 `os error 1455`
 
-**Claude Code**（Anthropic 的 AI 编程助手）
-- https://www.claude.com/product/claude-code
-- VS Code 插件：https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code
-- 文档：https://code.claude.com/docs/en/overview
+## 已知限制
 
-**ComfyUI**（开源的节点式 AI 工作台）
-- 下载：https://www.comfy.org/download
-- GitHub：https://github.com/Comfy-Org/ComfyUI
-- 插件管理器：https://github.com/Comfy-Org/ComfyUI-Manager
-- WanVideoWrapper 插件（Kijai）：https://github.com/kijai/ComfyUI-WanVideoWrapper
+1. **H3 单段 ≤192 帧（8 秒）**，超过会把 ComfyUI 打崩（进程级 OOM，不是异常）
+2. **1152×640 及以上直接渲染必崩**；1280 只能靠后置放大
+3. **镜头会轻微漂移**；整帧变换修复会放大成"呼吸式推拉"，实测更假，建议保持原片
+4. **H3 生成的是克隆音色**，不是原录音；要逐字一致走 Wan 路线
+5. **16 GB 卡上做长片很慢**：45 秒台词约 1 小时以上
 
-**做脸：Qwen-Image-Edit-2511**（阿里通义千问）
-- https://huggingface.co/Qwen/Qwen-Image-Edit-2511
-- 看图的模型 Qwen2.5-VL：https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct
-- 4 步提速 LoRA（lightx2v）：https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning
-- 人脸角度和相似度检查 InsightFace：https://github.com/deepinsight/insightface （代码是 MIT；预训练模型官方只许非商业研究使用，商用要另外授权）
-- 2026 年 9 月新出的 Qwen-Image 2.1 换成了更新的 Qwen3-VL，许可证也改成了研究许可。我们用的是 Apache 2.0、可以商用的 2511。
+## 致谢与许可
 
-**声音：Qwen3-TTS**（阿里通义千问）
-- GitHub：https://github.com/QwenLM/Qwen3-TTS
-- 在线试用：https://huggingface.co/spaces/Qwen/Qwen3-TTS
-- 声音设计模型：https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign
-- 克隆模型：https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base
-- 声纹检查 CAM++（3D-Speaker）：https://github.com/modelscope/3D-Speaker
-- 听写检查 Whisper：https://github.com/openai/whisper
-
-**开口说话：InfiniteTalk（美团）+ Wan2.1（阿里通义万相）**
-- InfiniteTalk：https://github.com/MeiGen-AI/InfiniteTalk
-- Wan2.1：https://github.com/Wan-Video/Wan2.1
-- 提速 LoRA：https://huggingface.co/lightx2v
-- 中文语音特征 wav2vec2（腾讯中文版）：https://huggingface.co/TencentGameMate/chinese-wav2vec2-base
-
-每个文件的准确文件名、大小、放哪个文件夹、从哪里下，见 [reference/models.md](skills/digital-human/reference/models.md)。模型文件做脸一套约 31 GB，说话一套约 36 GB；跑的时候要放进显卡能用的内存里。
-
-## 硬件
-
-**我们用的**：NVIDIA DGX Spark 官方版。GB10 芯片，20 核 CPU，128 GB 内存（CPU 和显卡共用），4 TB 硬盘，Ubuntu 系统。
-https://www.nvidia.com/en-us/products/workstations/dgx-spark/
-
-**其他能用的电脑**（我们没有实测，按官方和社区资料整理）：
-- 同芯片的 GB10 机器，同样 128 GB 内存，流程可以照搬。华硕 Ascent GX10：https://www.asus.com/networking-iot-servers/desktop-ai-supercomputer/ultra-small-ai-supercomputers/asus-ascent-gx10/ 。戴尔 Pro Max with GB10、联想 ThinkStation PGX、惠普 ZGX Nano G1n 也是同一颗芯片，搜型号即可。
-- 英伟达显卡台式机，系统内存 64 GB 以上。兼容最好，算得比 Spark 快；说话视频要开 WanVideoWrapper 的 block swap，或者用压缩版模型。
-  - RTX 5090（32 GB）：https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5090/
-  - RTX 4090（24 GB）：https://www.nvidia.com/en-us/geforce/graphics-cards/40-series/rtx-4090/
-- Mac：Mac Studio M5 Max（最高 128 GB）、M5 Ultra（96 GB 起）。配音能跑，做脸能跑但慢，说话视频目前没找到在 Mac 上跑通的可靠记录。
-  - https://www.apple.com/mac-studio/
-  - Mac 上跑 Qwen3-TTS 可以看社区项目 mlx-audio：https://github.com/Blaizzy/mlx-audio
-- 手上没有合适的机器：可以先按小时租云端显卡试。
-
-显存不够时，换压缩得更小的模型版本（fp8、GGUF），或者让 ComfyUI 把一部分模型放到内存里轮着用。能跑，就是更慢。
-
-## 花多少钱
-
-模型都在本地跑，生成多少张图、多少段视频都不按次付费。花钱的是电脑、电费和 Claude Code 的订阅。
-
-## 许可证
-
-这个仓库里的脚本、工作流和文档用 MIT 许可证，见 [LICENSE](LICENSE)。用到的每个模型有自己的许可证，用之前看清楚：比如 InsightFace 的预训练人脸模型只许非商业研究使用，商用要另外授权。
-
-网址最后核对日期：2026 年 10 月 30 日。
+- 原始流程：[builder2ai/builder2-digital-human](https://github.com/builder2ai/builder2-digital-human)（MIT）
+- 本仓库在其基础上做了 16 GB 显存适配：GGUF 量化、CPU 文本编码器、block swap、H3 + AudioSync 路线、SeedVR2 放大、显存上限实测
+- License: MIT（见 LICENSE）

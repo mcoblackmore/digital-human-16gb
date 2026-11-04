@@ -17,7 +17,23 @@
 
 ComfyUI 左侧「模板」里有 Qwen-Image-Edit 2511 的官方模板，打开会列出同样的文件和下载链接。
 
-## 开口说话：约 36 GB
+## 开口说话（16 GB 显存路线）：MiniMax H3 ref2va，约 43 GB
+
+小显存机器走这条（见 SKILL.md 3A）。模型页：https://huggingface.co/Comfy-Org/MiniMax-H3
+
+| 文件夹 | 文件 | 大小 | 说明 |
+|---|---|---|---|
+| diffusion_models | minimax_h3_ref2va_pruned_int8_convrot.safetensors | 19.5 GB | ref2va = 参考图 + 音频 → 说话视频 |
+| text_encoders | qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors | 14.6 GB | H3 的文本/图像编码器（nvfp4 需要 CUDA 13） |
+| vae | minimax_h3_video_vae_fp16.safetensors | 4.85 GB | 视频 VAE |
+| vae | minimax_h3_audio_vae_fp32.safetensors | 0.58 GB | 音频 VAE |
+| loras | minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors | 1.96 GB | 4 步 Turbo（Comfy-Org/MiniMax-H3 的 `loras/`） |
+| latent_upscale_models | minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors | 0.69 GB | H3 专用 latent 放大（https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler） |
+| SEEDVR2 | seedvr2_ema_3b_fp8_e4m3fn.safetensors + ema_vae_fp16.safetensors | 3.39 + 0.50 GB | 后置放大到 1280（https://huggingface.co/numz/SeedVR2_comfyUI） |
+
+H3 的音频锁定靠 **ComfyUI-Pixaroma** 的 `PixaromaH3AudioSync` 节点，缺了它模型会自己编语音。
+
+## 开口说话（24 GB 以上显存路线）：Wan + InfiniteTalk，约 36 GB
 
 InfiniteTalk：https://github.com/MeiGen-AI/InfiniteTalk ，Wan2.1：https://github.com/Wan-Video/Wan2.1 （都是 Apache 2.0）
 
@@ -38,8 +54,20 @@ InfiniteTalk：https://github.com/MeiGen-AI/InfiniteTalk ，Wan2.1：https://git
 | 插件 | 用途 | 我们用的版本 |
 |---|---|---|
 | ComfyUI-WanVideoWrapper https://github.com/kijai/ComfyUI-WanVideoWrapper | 在 ComfyUI 里跑 Wan2.1 和 InfiniteTalk | 088128b（2026-05-24） |
+| **ComfyUI-Pixaroma** https://github.com/pixaroma/ComfyUI-Pixaroma | H3 的音频锁定（`PixaromaH3AudioSync`）、latent 放大、时间线 | main（2026-11） |
+| **ComfyUI-SeedVR2_VideoUpscaler** https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler | 后置放大到 1280 | main（2026-11） |
 | ComfyUI-KJNodes https://github.com/kijai/ComfyUI-KJNodes | 缩放图片、取尺寸 | f20bdd5（2026-10-19） |
 | ComfyUI-VideoHelperSuite https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite | 读视频、存视频 | 4d907be（2026-09-01） |
+| ComfyUI-GGUF https://github.com/city96/ComfyUI-GGUF | 加载 GGUF 量化模型（16 GB 卡必需） | main |
+
+## 小显存机器（16 GB）的启动与系统设置
+
+这些不是模型，但缺了会直接失败：
+
+1. **ComfyUI 启动参数**：`--disable-cuda-malloc --disable-dynamic-vram --disable-nvml-pressure --disable-pinned-memory`。前三个避免新版 CUDA 分配器/DynamicVRAM 与 WanVideoWrapper、H3 的显存策略打架；`--disable-pinned-memory` 把常驻内存从 21.5 GB 降到 6.9 GB（32 GB 内存机器必需）。
+2. **Windows 页面文件**：设为 32–64 GB（我们放在 D 盘）。不够时报 `os error 1455`（提交上限耗尽）。
+3. **跑之前关掉浏览器**：Chrome/Edge 能吃掉 3–6 GB。
+4. **模型放 SSD**，E 盘至少要留 15 GB 余量。
 
 ComfyUI 本体：856a922b（2026-09-10）。Qwen-Image-Edit 用到的节点是 ComfyUI 自带的，版本太旧会缺节点，更新 ComfyUI 即可。
 

@@ -26,6 +26,8 @@ W, H = int(os.environ.get('IT_W', 896)), int(os.environ.get('IT_H', 512))
 START = int(os.environ.get('IT_START', 2))
 STEPS = int(os.environ.get('IT_STEPS', 4))
 ASCALE = float(os.environ.get('IT_AUDIO_SCALE', 1.5))
+SWAP = int(os.environ.get('IT_SWAP', 30))
+IT_MODEL = os.environ.get('IT_MODEL', 'wan2.1-i2v-14b-480p-Q5_K_M.gguf')
 POS = os.environ.get('IT_PROMPT') or ('A person talks to the camera in a cozy studio, natural expressions, '
                                       'natural lip movements, clear mouth, steady gaze.')
 NEG = ('bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall '
@@ -41,17 +43,20 @@ g = {
         "low_mem_load": False, "merge_loras": False}},
     "mt": {"class_type": "MultiTalkModelLoader", "inputs": {
         "model": m('diffusion_models', 'Wan2_1-InfiniTetalk-Single_fp16.safetensors')}},
+    "swap": {"class_type": "WanVideoBlockSwap", "inputs": {
+        "blocks_to_swap": SWAP, "offload_img_emb": True, "offload_txt_emb": True,
+        "use_non_blocking": True, "prefetch_blocks": 1}},
     "model": {"class_type": "WanVideoModelLoader", "inputs": {
-        "model": m('diffusion_models', 'Wan2_1-I2V-14B-480P_fp8_e4m3fn.safetensors'), "base_precision": "bf16",
-        "quantization": "fp8_e4m3fn", "load_device": "main_device", "attention_mode": "sdpa",
-        "lora": ["lora", 0], "multitalk_model": ["mt", 0]}},
+        "model": m('unet_gguf', IT_MODEL), "base_precision": "bf16",
+        "quantization": "disabled", "load_device": "main_device", "attention_mode": "sdpa",
+        "lora": ["lora", 0], "multitalk_model": ["mt", 0], "block_swap_args": ["swap", 0]}},
     "vae": {"class_type": "WanVideoVAELoader", "inputs": {
         "model_name": m('vae', 'Wan2_1_VAE_bf16.safetensors'), "precision": "bf16"}},
     "clipv": {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": m('clip_vision', 'clip_vision_h.safetensors')}},
     "text": {"class_type": "WanVideoTextEncodeCached", "inputs": {
-        "model_name": m('text_encoders', 'umt5-xxl-enc-bf16.safetensors'), "precision": "bf16",
-        "positive_prompt": POS, "negative_prompt": NEG, "quantization": "disabled", "use_disk_cache": True,
-        "device": "gpu"}},
+        "model_name": m('text_encoders', 'umt5-xxl-enc-fp8_e4m3fn.safetensors'), "precision": "bf16",
+        "positive_prompt": POS, "negative_prompt": NEG, "quantization": "fp8_e4m3fn", "use_disk_cache": True,
+        "device": "cpu"}},
     "vid": {"class_type": "VHS_LoadVideo", "inputs": {
         "video": None, "force_rate": 0, "custom_width": 0, "custom_height": 0, "frame_load_cap": 0,
         "skip_first_frames": 0, "select_every_nth": 1, "format": "Wan"}},
@@ -59,7 +64,7 @@ g = {
         "image": ["vid", 0], "width": W, "height": H, "upscale_method": "lanczos", "keep_proportion": "crop",
         "pad_color": "0, 0, 0", "crop_position": "center", "divisible_by": 16, "device": "cpu"}},
     "enc": {"class_type": "WanVideoEncode", "inputs": {
-        "vae": ["vae", 0], "image": ["resize", 0], "enable_vae_tiling": False, "tile_x": 272, "tile_y": 272,
+        "vae": ["vae", 0], "image": ["resize", 0], "enable_vae_tiling": True, "tile_x": 256, "tile_y": 256, "tile_stride_x": 192, "tile_stride_y": 192,
         "tile_stride_x": 144, "tile_stride_y": 128, "noise_aug_strength": 0.0, "latent_strength": 1.0}},
     "first": {"class_type": "GetImageRangeFromBatch", "inputs": {"images": ["resize", 0], "start_index": 0, "num_frames": 1}},
     "size": {"class_type": "GetImageSizeAndCount", "inputs": {"image": ["first", 0]}},
@@ -83,7 +88,7 @@ g = {
         "scheduler": "dpm++_sde", "riflex_freq_index": 0, "denoise_strength": 1.0, "batched_cfg": False,
         "rope_function": "comfy", "start_step": START, "end_step": -1, "add_noise_to_samples": True}},
     "dec": {"class_type": "WanVideoDecode", "inputs": {
-        "vae": ["vae", 0], "samples": ["samp", 0], "enable_vae_tiling": False, "tile_x": 272, "tile_y": 272,
+        "vae": ["vae", 0], "samples": ["samp", 0], "enable_vae_tiling": True, "tile_x": 256, "tile_y": 256, "tile_stride_x": 192, "tile_stride_y": 192,
         "tile_stride_x": 144, "tile_stride_y": 128, "normalization": "default"}},
     "out": {"class_type": "VHS_VideoCombine", "inputs": {
         "images": ["dec", 0], "audio": ["audio", 0], "frame_rate": 25.0, "loop_count": 0,

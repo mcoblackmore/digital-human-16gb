@@ -1,10 +1,10 @@
+lch.m4a
+poc-minimax_h3/
+最终方案.md
 __pycache__/
 *.pyc
 .DS_Store
-Thumbs.db
-# outputs from trying the skill here: keep them out of the repo
-*.png
-*.jpg
 *.mp4
 *.wav
-*.pt
+*.png
+*.jpg

@@ -1,4 +1,4 @@
-"""Run Qwen-Image-Edit-2511 (int8 + Lightning 4-step LoRA) through the ComfyUI API, one job per line.
+"""Run Qwen-Image-Edit-2511 (GGUF Q5_K_M + Lightning 4-step LoRA) through the ComfyUI API, one job per line.
 
 The graph is ComfyUI's Qwen-Image-Edit 2511 template flattened to API form (same as workflows/形象编辑.json).
 
@@ -14,7 +14,7 @@ Prints one JSON line per job with the downloaded files.
 import json, os, sys, time, struct, zlib, tempfile
 import comfy
 
-UNET = 'qwen_image_edit_2511_int8_convrot.safetensors'
+UNET = 'qwen-image-edit-2511-Q5_K_M.gguf'  # GGUF quantized for 16GB VRAM (was int8_convrot.safetensors)
 CLIP = 'qwen_2.5_vl_7b_fp8_scaled.safetensors'
 VAE = 'qwen_image_vae.safetensors'
 LORA = 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'
@@ -37,8 +37,7 @@ def graph(img, prompt, seed, prefix, neg='', turbo=True, steps=None, cfg=None, d
     cfg = cfg if cfg is not None else (1.0 if turbo else 4.0)
     g = {
         "41": {"class_type": "LoadImage", "inputs": {"image": img}},
-        "161": {"class_type": "UNETLoader", "inputs": {"unet_name": comfy.find_model('diffusion_models', UNET),
-                                                       "weight_dtype": "default"}},
+        "161": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": comfy.find_model('unet_gguf', UNET)}},
         "162": {"class_type": "CLIPLoader", "inputs": {"clip_name": comfy.find_model('text_encoders', CLIP),
                                                        "type": "qwen_image", "device": "default"}},
         "146": {"class_type": "VAELoader", "inputs": {"vae_name": comfy.find_model('vae', VAE)}},
