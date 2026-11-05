@@ -20,7 +20,8 @@ warnings.filterwarnings('ignore')
 
 out = sys.argv[1]
 clips = sys.argv[2:]
-CROP = float(os.environ.get('JC_CROP', 0.12))
+CROP = float(os.environ.get('JC_CROP', 0.12))      # bottom band (hands + edge smear)
+CROP_X = float(os.environ.get('JC_CROP_X', 0.0))   # each side, removes stretched edge pixels
 TRIM = float(os.environ.get('JC_TRIM', 0.10))
 CRF = os.environ.get('JC_CRF', '15')
 
@@ -85,6 +86,10 @@ def load(path):
 
 def cropped(frames, W, H):
     h = int(round(H * (1 - CROP)))
+    dx = int(round(W * CROP_X))
+    if dx > 0:
+        frames = [fr[:h, dx:W - dx] for fr in frames]
+        return frames, W - 2 * dx, h
     return [fr[:h] for fr in frames], W, h
 
 
@@ -99,7 +104,10 @@ for c in clips:
                  'c': fc[0], 'w': fc[1]})
     print(f'{os.path.basename(c)}: {len(frames)} frames {W}x{H} face_w={fc[1]:.1f}')
 
-target_w = min(i['w'] for i in info)
+# Align to the LARGEST face: every clip is scaled by >=1, so the warped frame always covers
+# the canvas and no border (hence no streak) can appear. Shrinking instead leaves an
+# out-of-bounds margin that any border mode renders as visible streaks or mirror copies.
+target_w = min(max(i['w'] for i in info), min(i['w'] for i in info) * 1.35)
 target_c = info[0]['c']
 W, H = info[0]['W'], info[0]['H']
 print(f'target face_w={target_w:.1f} at {target_c[0]:.0f},{target_c[1]:.0f}')
@@ -112,8 +120,10 @@ for idx, i in enumerate(info):
                   [0, s, target_c[1] - s * i['c'][1]]], dtype=np.float32)
     inter = os.path.join(tmp, f'v{idx}.mkv')
     wr = cv2.VideoWriter(inter, cv2.VideoWriter_fourcc(*'FFV1'), i['fps'], (W, H))
+    # BORDER_REPLICATE turned the out-of-bounds margin into vertical streaks; mirror instead,
+    # then drop a small margin so nothing stretched survives
     for fr in i['frames']:
-        wr.write(cv2.warpAffine(fr, M, (W, H), flags=cv2.INTER_AREA,
+        wr.write(cv2.warpAffine(fr, M, (W, H), flags=cv2.INTER_CUBIC,
                                 borderMode=cv2.BORDER_REPLICATE))
     wr.release()
     part = os.path.join(tmp, f'p{idx}.mp4')
