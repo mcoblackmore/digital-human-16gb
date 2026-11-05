@@ -5,8 +5,11 @@ Three fixes, in order, each one measured on this machine:
   2. shrink-only framing alignment — every clip is scaled to the smallest face and centred on the
      first clip's face, so clips cut together without a size jump and nothing is upscaled (a 1.41x
      upscale measured 268 -> 29 on Laplacian variance, i.e. visibly soft);
-  3. trim the first JC_TRIM seconds of audio+video and fade in — each H3 clip starts with a burst
-     (peak 863-931 vs 145-507 for normal speech).
+  3. cut each clip to its speech boundaries — detect leading/trailing silence in the audio and
+     trim video+audio together, so the join has no dead air. A fixed head trim is not enough: a
+     clip rendered to 17k+5 frames usually carries a few hundred ms of trailing silence, which
+     reads as an obvious pause at the cut. A short fade-in also kills the burst each clip starts
+     with (peak 863-931 vs 145-507 for normal speech).
 
 usage: join_clips.py <out.mp4> <clip1.mp4> <clip2.mp4> [...]
 env JC_CROP (0.12 bottom band), JC_TRIM (0.10 s), JC_CRF (15)
@@ -38,6 +41,31 @@ def face_of(frame):
     f = max(fs, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))
     x1, y1, x2, y2 = f.bbox
     return np.array([(x1 + x2) / 2, (y1 + y2) / 2]), float(x2 - x1)
+
+
+def speech_bounds(path, thresh=0.02, pad_head=0.03, pad_tail=0.08, skip_head=0.15):
+    """(start, end) seconds of actual speech in the clip's audio track."""
+    import wave
+    tmpw = tempfile.mktemp(suffix='.wav')
+    subprocess.run([FFMPEG, '-y', '-v', 'error', '-i', path, '-vn', '-ac', '1', '-ar', '16000', tmpw],
+                   check=True)
+    w = wave.open(tmpw)
+    a = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32)
+    sr = w.getframerate()
+    w.close()
+    os.unlink(tmpw)
+    if a.size == 0:
+        return 0.0, 0.0
+    a = np.abs(a) / (np.abs(a).max() + 1e-9)
+    # H3 starts every clip with a short burst; skipping it keeps the burst from being
+    # mistaken for the first syllable (that mistake left ~0.5 s of dead air at the join)
+    skip = int(sr * skip_head)
+    idx = np.where(a[skip:] > thresh)[0] + skip
+    if idx.size == 0:
+        return 0.0, len(a) / sr
+    start = max(skip_head, idx[0] / sr - pad_head)
+    end = min(len(a) / sr, idx[-1] / sr + pad_tail)
+    return start, end
 
 
 def load(path):
@@ -89,8 +117,10 @@ for idx, i in enumerate(info):
                                 borderMode=cv2.BORDER_REPLICATE))
     wr.release()
     part = os.path.join(tmp, f'p{idx}.mp4')
-    subprocess.run([FFMPEG, '-y', '-v', 'error', '-ss', str(TRIM), '-i', inter,
-                    '-ss', str(TRIM), '-i', i['path'],
+    a0, a1 = speech_bounds(i['path'])
+    print(f'  part{idx}: speech {a0:.2f}-{a1:.2f}s of the clip')
+    subprocess.run([FFMPEG, '-y', '-v', 'error', '-ss', f'{a0:.3f}', '-to', f'{a1:.3f}', '-i', inter,
+                    '-ss', f'{a0:.3f}', '-to', f'{a1:.3f}', '-i', i['path'],
                     '-map', '0:v', '-map', '1:a',
                     '-af', 'afade=t=in:st=0:d=0.01',
                     '-c:v', 'libx264', '-crf', CRF, '-pix_fmt', 'yuv420p',
