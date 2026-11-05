@@ -39,8 +39,8 @@
 | 主模型 | `minimax_h3_ref2va_pruned_int8_convrot.safetensors` 19.5 GB |
 | 音频锁定 | **`PixaromaH3AudioSync` 节点**（塞进 `ref_audios` 只会影响音色，模型会自己编语音） |
 | 加速 | `minimax_h3_ref2v_turbo_4step` LoRA，4 步 |
-| 实测 | **1056×608 / 8 秒视频 = 460 秒** |
-| 上限 | 1056×608 稳定；1152×640 起必崩 |
+| 实测 | **896×512 / 124 帧（5.2 秒）= 330 秒** |
+| 上限 | 草稿 896×512 / 124 帧最稳；1056×608 / 192 帧做精修必崩 |
 | 声音 | 克隆音色（内容一致，非原录音波形） |
 
 ```bat
@@ -48,8 +48,37 @@ set COMFY_URL=http://127.0.0.1:8189
 set H3_STEPS=4
 set H3_LORA=minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors
 set H3_LENGTH=192
-python scripts\h3_lipsync.py 定稿脸.png 配音.wav 输出目录 "英文提示词" 1056 608
+python scripts\h3_lipsync.py 定稿脸.png 配音.wav 输出目录 "英文提示词" 896 512
 ```
+
+#### 高分辨率：Deno「8plus2」两段式（实测 1600×928）
+
+草稿 896×512 → 1.8× latent 放大 → **只跑 2 步**重绘细节。比直接渲染高分省一半显存，比后置超分保脸。
+
+```bat
+:: 第 1 段：草稿（8 步 + 双 LoRA），同时存 AV latent
+set H3_UNET=MiniMax-H3_DenoMix_ref2va_pruned_int8_v3.safetensors
+set H3_STEPS=8
+set H3_LORA=h3\MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors;h3\minimax_h3_dmd_ref2va_8step_turbo_pruned.safetensors
+set H3_LENGTH=124
+set H3_SAVE_LATENT=clip01
+python scripts\h3_lipsync.py 定稿脸.png 配音.wav draft\ "提示词" 896 512
+
+:: 第 2 段：精修到 1600×928（2 步 + 音频 mask）
+set H3_UNET=MiniMax-H3_DenoMix_ref2va_pruned_int8_v3.safetensors
+set H3_REFINER=minimax_h3_open_regenerate_2k_refiner_rank_16_bf16.safetensors
+python scripts\refine_deno.py <draft>_video_*.latent <draft>_audio_*.latent 定稿脸.png 配音.wav refined\ 1600 928
+```
+
+| 阶段 | 实测 | 峰值显存 |
+|---|---|---|
+| 草稿 896×512 / 124 帧 | 330 秒 | ~13 GB |
+| 精修 1600×928 / 2 步 | 531 秒 | 12 GB |
+
+**三个必须对齐的细节**（少一个就失败）：
+1. 精修只跑 2 步：`BasicScheduler(8)` → `SplitSigmas(6)` → 取**输出槽 1**（取槽 0 是从头重画，出来纯噪声）
+2. 音频 latent 用 `SolidMask(0)` + `SetLatentNoiseMask` 屏蔽，只重画画面
+3. 草稿必须 896×512 / 124 帧；1056×608 / 192 帧做 3 步全量精修会把 ComfyUI 打崩（注意力开销 2.4 倍）
 
 ### 3B. 说话（24 GB+ 路线）：Wan + InfiniteTalk
 
@@ -71,11 +100,14 @@ python scripts\infinitetalk_run.py - 配音.wav 输出目录
 
 ## 选型对照
 
-| 路线 | 分辨率 | 8 秒耗时 | 嘴型 | 镜头 | 声音 |
+| 路线 | 分辨率 | 5.2 秒耗时 | 眼睛 | 嘴型 | 声音 |
 |---|---|---|---|---|---|
-| Wan + InfiniteTalk | 896×512 | 981 秒 | 跟配音 | 底稿约束，最稳 | **原录音** |
-| MiniMax H3 | 1056×608 | 460 秒 | 跟配音 | 轻微漂移 | 克隆音色 |
-| H3 + SeedVR2 1.2× | 1278×736 | 1110 秒 | 跟配音 | 轻微漂移 | 克隆音色 |
+| **H3 草稿（Deno 参数）** | 896×512 | **330 秒** | ✅ | 跟配音 | 克隆音色 |
+| **H3 草稿 + 8plus2 精修** | **1600×928** | **861 秒** | ✅ | 跟配音 | 克隆音色 |
+| H3 原生（旧参数） | 1056×608 | 460 秒 | ✅ | 跟配音 | 克隆音色 |
+| H3 + 纯 latent 放大 | 1920×1088 | 740 秒 | ❌ 眼睛糊 | 跟配音 | 克隆音色 |
+| H3 + SeedVR2 1.2× | 1278×736 | 1110 秒 | ✅ | 嘴部轻飘 | 克隆音色 |
+| Wan + InfiniteTalk | 896×512 | 981 秒（8 秒） | ✅ | 跟配音 | **原录音** |
 
 ## 目录结构
 
@@ -94,6 +126,8 @@ skills/digital-human/
 │   ├── still_source.py          # 底稿视频（轻晃闭嘴，不用模型）
 │   ├── infinitetalk_run.py      # Wan + InfiniteTalk（3B 路线）
 │   ├── h3_lipsync.py            # MiniMax H3 + AudioSync（3A 路线）
+│   ├── refine_deno.py           # 8plus2 精修（1.8× latent + 2 步）
+│   ├── refine_av.py             # 精修（3 步全量版，会 OOM，留作参考）
 │   ├── upscale_seedvr2.py       # SeedVR2 后置放大
 │   └── produce_episode.py       # 整段编排（配音 → 逐句渲染 → 拼接）
 └── workflows/                   # ComfyUI 画布版工作流
@@ -133,7 +167,9 @@ python main.py --windows-standalone-build --enable-manager --listen 0.0.0.0 --po
 2. **1152×640 及以上直接渲染必崩**；1280 只能靠后置放大
 3. **镜头会轻微漂移**；整帧变换修复会放大成"呼吸式推拉"，实测更假，建议保持原片
 4. **H3 生成的是克隆音色**，不是原录音；要逐字一致走 Wan 路线
-5. **16 GB 卡上做长片很慢**：45 秒台词约 1 小时以上
+5. **16 GB 卡上做长片很慢**：1 分钟成品约 1.1 小时（只草稿）或 2.9 小时（1600×928 精修）
+6. **H3 的 latent 是嵌套的 AV latent**：`SaveLatent` 存不了，必须先 `LTXVSeparateAVLatent` 拆成画面/声音两份
+7. **精修不能全量重采样**：3 步全量会把 ComfyUI 打崩；必须是 2 步（SplitSigmas 槽 1）+ 音频 mask
 
 ## 致谢与许可
 
