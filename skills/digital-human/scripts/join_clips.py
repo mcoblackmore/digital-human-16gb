@@ -107,7 +107,9 @@ for c in clips:
 # Align to the LARGEST face: every clip is scaled by >=1, so the warped frame always covers
 # the canvas and no border (hence no streak) can appear. Shrinking instead leaves an
 # out-of-bounds margin that any border mode renders as visible streaks or mirror copies.
-target_w = min(max(i['w'] for i in info), min(i['w'] for i in info) * 1.35)
+# no clamp: any cap below max(w) makes the largest clip shrink, which re-introduces the
+# out-of-bounds margin (streaks) and leaves a size mismatch between clips
+target_w = max(i['w'] for i in info)
 target_c = info[0]['c']
 W, H = info[0]['W'], info[0]['H']
 print(f'target face_w={target_w:.1f} at {target_c[0]:.0f},{target_c[1]:.0f}')
