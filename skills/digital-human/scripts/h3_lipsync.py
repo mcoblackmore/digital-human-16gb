@@ -25,6 +25,7 @@ CFG = float(os.environ.get('H3_CFG', 1.0))
 LEN = int(os.environ.get('H3_LENGTH', 192))
 SEED = int(os.environ.get('H3_SEED', 42))
 LORA = os.environ.get('H3_LORA')
+SAVE_LATENT = os.environ.get('H3_SAVE_LATENT')
 UP_W = int(os.environ.get('H3_UP_W', 0))
 UP_H = int(os.environ.get('H3_UP_H', 0))
 UP_MODEL = os.environ.get('H3_UP_MODEL', 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors')
@@ -55,6 +56,14 @@ g = {
         "pingpong": False, "save_output": True}},
 }
 
+if SAVE_LATENT:
+    # the H3 latent is a nested AV latent; split it so SaveLatent can serialize both halves
+    g["seplat"] = {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["ks", 0]}}
+    g["savelat"] = {"class_type": "SaveLatent", "inputs": {
+        "samples": ["seplat", 0], "filename_prefix": SAVE_LATENT + "_video"}}
+    g["savelat_a"] = {"class_type": "SaveLatent", "inputs": {
+        "samples": ["seplat", 1], "filename_prefix": SAVE_LATENT + "_audio"}}
+
 if REF_VIDEO:
     g["refvid"] = {"class_type": "VHS_LoadVideo", "inputs": {
         "video": comfy.upload(REF_VIDEO), "force_rate": 24, "custom_width": 0, "custom_height": 0,
@@ -68,9 +77,14 @@ if UP_W and UP_H:
     g["dec"]["inputs"]["samples"] = ["up", 0]
 
 if LORA:
-    g["lora"] = {"class_type": "LoraLoaderModelOnly", "inputs": {
-        "model": ["unet", 0], "lora_name": LORA, "strength_model": 1.0}}
-    g["sync"]["inputs"]["model"] = ["lora", 0]
+    # LORA may hold several names separated by ';' — they are chained
+    prev = ["unet", 0]
+    for i, name in enumerate([x.strip() for x in LORA.split(';') if x.strip()]):
+        node = f"lora{i}"
+        g[node] = {"class_type": "LoraLoaderModelOnly", "inputs": {
+            "model": prev, "lora_name": name, "strength_model": 1.0}}
+        prev = [node, 0]
+    g["sync"]["inputs"]["model"] = prev
 
 t0 = time.time()
 print(f'H3 ref2va+AudioSync {W}x{H}, {LEN} frames, {STEPS} steps cfg {CFG}, lora={LORA}', flush=True)

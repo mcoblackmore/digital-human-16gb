@@ -76,8 +76,36 @@ description: 用开源模型在本地做一个 AI 数字人主播：用文字写
 6. **镜头会自己动。** H3 生成的画面里镜头会轻微漂移/呼吸。提示词写 `locked-off tripod, completely static frame, no pan, no zoom, no dolly` 能减弱到可接受的程度（实测中心抖动 11 px 左右，观感可接受）。
    **不要用整帧变换去"修"**：`face_lock.py` 试过两种模式（等比缩放锁定、只平移锁定），都会因为 H3 本身的镜头前后微动而被放大成明显的呼吸式推拉，比原片更假。实测结论：保持原始输出。
    真要完全静止，得用 24 GB 以上显存走 Wan + InfiniteTalk 的底稿路线（3B），底稿本身是静止的。
-7. **要 1280 就后置放大**，且**只用 1.2× 左右**（`upscale_seedvr2.py 输入.mp4 输出目录 736`）。5× 放大（448→2240）会让嘴部明显飘。
+7. **要更高分辨率：走 Deno 的「8plus2」两段式**（见 3A-2），不要用 SeedVR2 或纯 latent 放大——前者嘴部飘，后者眼睛会糊。
 8. **ComfyUI 启动参数**（缺一不可）：`--disable-cuda-malloc --disable-dynamic-vram --disable-nvml-pressure --disable-pinned-memory`。32 GB 内存还要把页面文件设到 32–64 GB，否则报 `os error 1455`。
+
+### 3A-2. 高分辨率两段式（Deno「8plus2」，16 GB 实测 1600×928）
+
+草稿用小尺寸快速出片，满意后再花 2 步把 latent 放大并重绘细节。**比直接渲染高分省一半显存，比后置超分更保脸。**
+
+1. **草稿**（896×512 / 124 帧 / 8 步，双 LoRA），同时保存 AV latent：
+   ```
+   H3_UNET=MiniMax-H3_DenoMix_ref2va_pruned_int8_v3.safetensors
+   H3_STEPS=8
+   H3_LORA=h3\MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors;h3\minimax_h3_dmd_ref2va_8step_turbo_pruned.safetensors
+   H3_LENGTH=124
+   H3_SAVE_LATENT=deno_L01
+   python h3_lipsync.py 定稿.png 配音.wav draft/ "英文提示词" 896 512
+   ```
+   实测 **330 秒**。`H3_SAVE_LATENT` 会把 H3 的 AV latent 拆成 `*_video` / `*_audio` 两个 `.latent` 存到 ComfyUI/output（直接存整个 AV latent 会报 `'NestedTensor' object has no attribute 'contiguous'`）。
+2. **精修**（1.8× latent + 2 步 + 音频屏蔽）：
+   ```
+   H3_UNET=MiniMax-H3_DenoMix_ref2va_pruned_int8_v3.safetensors
+   H3_REFINER=minimax_h3_open_regenerate_2k_refiner_rank_16_bf16.safetensors
+   python refine_deno.py <draft>_video_*.latent <draft>_audio_*.latent 定稿.png 配音.wav refined/ 1600 928
+   ```
+   实测 **531 秒**，峰值显存 12 GB。成片 1600×928，眼睛正常。
+3. **三个必须对齐的细节**（少一个就失败）：
+   - **精修只跑 2 步**：`BasicScheduler(simple, 8, 1)` → `SplitSigmas(step=6)` → 取**输出槽 1**（低噪声段）。取槽 0 是从头重画，出来是纯噪声。
+   - **音频 latent 用 `SolidMask(0)` + `SetLatentNoiseMask` 屏蔽**，只让画面参与重采样；不屏蔽会把音频也重画，还会多占显存。
+   - **草稿必须是 896×512 / 124 帧**。1056×608 / 192 帧的草稿做 3 步全量精修会直接把 ComfyUI 打崩（注意力开销约 2.4 倍）。
+4. **更省时间的替代**：只做第 1 步（896×512 草稿 330 秒），分辨率够用就别精修。
+5. **最终放大到 1080p+**：视频作者的免费方案是 RTX VSR（`DenoRTXVFXVideoFinisher`，不到 1 分钟）；付费方案约 6 分钟。都不如上面的 latent 精修保脸。
 
 ### 3B. Wan + InfiniteTalk（24 GB 以上显存）
 

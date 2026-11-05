@@ -29,6 +29,10 @@ MODELS = [  # (ComfyUI model folder, file, what it is)
     ('latent_upscale_models', 'minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors', 'talk16: H3 latent upscaler'),
     ('SEEDVR2', 'seedvr2_ema_3b_fp8_e4m3fn.safetensors', 'upscale: SeedVR2 3B fp8'),
     ('SEEDVR2', 'ema_vae_fp16.safetensors', 'upscale: SeedVR2 VAE'),
+    ('diffusion_models', 'MiniMax-H3_DenoMix_ref2va_pruned_int8_v3.safetensors', 'hi-res: DenoMix ref2va'),
+    ('loras', 'MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors', 'hi-res: 8-step Acc LoRA'),
+    ('loras', 'minimax_h3_dmd_ref2va_8step_turbo_pruned.safetensors', 'hi-res: 8-step dmd LoRA'),
+    ('loras', 'minimax_h3_open_regenerate_2k_refiner_rank_16_bf16.safetensors', 'hi-res: refiner LoRA'),
 ]
 NODES = {  # node class -> where it comes from
     'TextEncodeQwenImageEditPlus': 'ComfyUI itself (update ComfyUI)',
@@ -45,6 +49,9 @@ NODES = {  # node class -> where it comes from
     'PixaromaH3AudioSync': 'ComfyUI-Pixaroma',
     'PixaromaH3LatentUpscale': 'ComfyUI-Pixaroma',
     'SeedVR2VideoUpscaler': 'ComfyUI-SeedVR2_VideoUpscaler',
+    'MinimaxH3LatentUpscaler3D': 'Comfyui_Minimax_h3_latent_Upscaler',
+    'SplitSigmas': 'ComfyUI itself',
+    'SetLatentNoiseMask': 'ComfyUI itself',
 }
 PACKAGES = {  # import name -> pip name, step
     'cv2': ('opencv-python', 'face checks, 底稿'), 'insightface': ('insightface', 'face checks'),

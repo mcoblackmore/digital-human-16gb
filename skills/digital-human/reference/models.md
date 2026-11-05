@@ -33,6 +33,18 @@ ComfyUI 左侧「模板」里有 Qwen-Image-Edit 2511 的官方模板，打开�
 
 H3 的音频锁定靠 **ComfyUI-Pixaroma** 的 `PixaromaH3AudioSync` 节点，缺了它模型会自己编语音。
 
+### 高分辨率两段式（Deno「8plus2」，16 GB 实测）
+
+| 文件夹 | 文件 | 大小 | 说明 |
+|---|---|---|---|
+| diffusion_models | MiniMax-H3_DenoMix_ref2va_pruned_int8_v3.safetensors | 21.0 GB | Deno 的混合剪枝版（https://huggingface.co/Deno2026/MiniMax-H3-DenoMix） |
+| loras | H3/MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors | 1.73 GB | 8 步加速（https://huggingface.co/Kijai/MiniMax-H3-experimental） |
+| loras | H3/minimax_h3_dmd_ref2va_8step_turbo_pruned.safetensors | 2.29 GB | 8 步 turbo（https://huggingface.co/RunningHubAI/rh-minimax-h3-dmd-ref2va-8step-turbo-pruned.safetensors-lora） |
+| loras | minimax_h3_open_regenerate_2k_refiner_rank_16_bf16.safetensors | 0.16 GB | 精修 refiner（同上 Kijai 仓库） |
+| latent_upscale_models | minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors | 0.69 GB | H3 专用 3D latent 放大 |
+
+插件：`Deno2026/comfyui-deno-custom-nodes`（`DenoResolutionSetup`、`DenoRTXVFXVideoFinisher` 等；精修脚本只用核心节点，装它是为了跑作者的原始工作流）。
+
 ## 开口说话（24 GB 以上显存路线）：Wan + InfiniteTalk，约 36 GB
 
 InfiniteTalk：https://github.com/MeiGen-AI/InfiniteTalk ，Wan2.1：https://github.com/Wan-Video/Wan2.1 （都是 Apache 2.0）
