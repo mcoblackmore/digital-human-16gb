@@ -26,6 +26,7 @@ LEN = int(os.environ.get('H3_LENGTH', 192))
 SEED = int(os.environ.get('H3_SEED', 42))
 LORA = os.environ.get('H3_LORA')
 SAVE_LATENT = os.environ.get('H3_SAVE_LATENT')
+FIRST_FRAME = os.environ.get('H3_FIRST_FRAME')
 UP_W = int(os.environ.get('H3_UP_W', 0))
 UP_H = int(os.environ.get('H3_UP_H', 0))
 UP_MODEL = os.environ.get('H3_UP_MODEL', 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors')
@@ -55,6 +56,12 @@ g = {
         "filename_prefix": "h3_sync", "format": "video/h264-mp4",
         "pingpong": False, "save_output": True}},
 }
+
+if FIRST_FRAME:
+    # chain clips: the previous clip's last frame goes in as a second reference image, so the
+    # model keeps that framing/pose (this node has no first_frame input)
+    g["first"] = {"class_type": "LoadImage", "inputs": {"image": comfy.upload(FIRST_FRAME)}}
+    g["ref"]["inputs"]["ref_images.ref_image_1"] = ["first", 0]
 
 if SAVE_LATENT:
     # the H3 latent is a nested AV latent; split it so SaveLatent can serialize both halves
@@ -90,5 +97,6 @@ t0 = time.time()
 print(f'H3 ref2va+AudioSync {W}x{H}, {LEN} frames, {STEPS} steps cfg {CFG}, lora={LORA}', flush=True)
 e = comfy.run(g, poll=10)
 files = [f for f in comfy.download(e, out) if f.endswith('.mp4')]
+comfy.free()
 print(json.dumps({"status": e.get('status', {}).get('status_str'), "files": files,
                   "seconds": round(time.time() - t0), "error": comfy.error(e)}, ensure_ascii=False))

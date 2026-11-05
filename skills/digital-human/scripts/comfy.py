@@ -58,6 +58,14 @@ def find_model(folder, filename):
     return filename
 
 
+def free():
+    """Ask ComfyUI to unload models and drop cached memory (prevents OOM on the next job)."""
+    try:
+        call('/free', {'unload_models': True, 'free_memory': True}, timeout=30)
+    except Exception:
+        pass
+
+
 def run(graph, poll=3):
     """Queue an API-format graph and wait for it; returns the history entry."""
     pid = call('/prompt', {'prompt': graph, 'client_id': CLIENT})['prompt_id']

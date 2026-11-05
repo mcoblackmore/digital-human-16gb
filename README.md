@@ -109,6 +109,26 @@ python scripts\infinitetalk_run.py - 配音.wav 输出目录
 | H3 + SeedVR2 1.2× | 1278×736 | 1110 秒 | ✅ | 嘴部轻飘 | 克隆音色 |
 | Wan + InfiniteTalk | 896×512 | 981 秒（8 秒） | ✅ | 跟配音 | **原录音** |
 
+## 长视频：分段生成 + 一键拼接
+
+H3 单段上限约 8 秒（192 帧）。1 分钟片子 = 12 段，用 `join_clips.py` 一次拼好：
+
+```bat
+python scripts\join_clips.py 成片.mp4 段1.mp4 段2.mp4 ...
+```
+
+它依次做三件事（每一步都是实测出来的）：
+
+1. **裁掉底部 12%** —— H3 会在胸像构图的下缘凭空生成手指，提示词压不住
+2. **缩小对齐** —— 统一缩到最小的那张脸、居中到第一段，**只缩不放**（1.41× 放大把锐度从 268 压到 29）
+3. **裁掉每段前 0.1 秒** + 音频 10 ms 淡入 —— 每段开头有爆音（峰值 863 vs 正常 145）
+
+| 检查项 | 拼接前 | 拼接后 |
+|---|---|---|
+| 人脸尺寸跳变 | −29.1% | **+0.9%** |
+| 人脸位移 | −37 px | **−1.1 px** |
+| 段首爆音 | 863 | **34** |
+
 ## 目录结构
 
 ```
@@ -127,6 +147,7 @@ skills/digital-human/
 │   ├── infinitetalk_run.py      # Wan + InfiniteTalk（3B 路线）
 │   ├── h3_lipsync.py            # MiniMax H3 + AudioSync（3A 路线）
 │   ├── refine_deno.py           # 8plus2 精修（1.8× latent + 2 步）
+│   ├── join_clips.py            # 长视频拼接（裁底/缩小对齐/裁爆音）
 │   ├── refine_av.py             # 精修（3 步全量版，会 OOM，留作参考）
 │   ├── upscale_seedvr2.py       # SeedVR2 后置放大
 │   └── produce_episode.py       # 整段编排（配音 → 逐句渲染 → 拼接）
