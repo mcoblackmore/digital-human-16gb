@@ -11,8 +11,13 @@ Three fixes, in order, each one measured on this machine:
      reads as an obvious pause at the cut. A short fade-in also kills the burst each clip starts
      with (peak 863-931 vs 145-507 for normal speech).
 
+  4. blend the first frames of each clip into the previous clip's last frame — the measured
+     frame-to-frame difference at a cut is 13-22 while normal motion sits at 0.43, and the
+     brightness delta is only +-1.5, so the jump is geometry/pose, not colour. Blending does
+     not change the frame count or touch the audio, so lip sync is preserved.
+
 usage: join_clips.py <out.mp4> <clip1.mp4> <clip2.mp4> [...]
-env JC_CROP (0.12 bottom band), JC_TRIM (0.10 s), JC_CRF (15)
+env JC_CROP (0.12 bottom band), JC_TRIM (0.10 s), JC_CRF (15), JC_XFADE (6 frames)
 """
 import os, subprocess, sys, tempfile
 import cv2, numpy as np, insightface, warnings
@@ -24,6 +29,7 @@ CROP = float(os.environ.get('JC_CROP', 0.12))      # bottom band (hands + edge s
 CROP_X = float(os.environ.get('JC_CROP_X', 0.0))   # each side, removes stretched edge pixels
 TRIM = float(os.environ.get('JC_TRIM', 0.10))
 CRF = os.environ.get('JC_CRF', '15')
+XFADE = int(os.environ.get('JC_XFADE', '6'))   # frames blended into the previous clip's last frame
 
 try:
     import imageio_ffmpeg
@@ -116,20 +122,35 @@ print(f'target face_w={target_w:.1f} at {target_c[0]:.0f},{target_c[1]:.0f}')
 
 tmp = tempfile.mkdtemp(prefix='join_')
 parts = []
+expected = 0.0
+prev_last = None
 for idx, i in enumerate(info):
     s = target_w / i['w']
     M = np.array([[s, 0, target_c[0] - s * i['c'][0]],
                   [0, s, target_c[1] - s * i['c'][1]]], dtype=np.float32)
+    a0, a1 = speech_bounds(i['path'])
+    warped = [cv2.warpAffine(fr, M, (W, H), flags=cv2.INTER_CUBIC,
+                             borderMode=cv2.BORDER_REPLICATE) for fr in i['frames']]
+    # Dissolve into the previous clip's last frame, starting at the FIRST KEPT frame: the join
+    # trims a0 seconds of leading silence, so blending index 0 would be thrown away (measured:
+    # no change at all in the seam delta). Frame count and audio stay untouched -> sync intact.
+    start = int(round(a0 * i['fps']))
+    if prev_last is not None and XFADE > 0:
+        k = min(XFADE, max(0, len(warped) - start))
+        for j in range(k):
+            a = (j + 1) / (k + 1)          # 1/k .. k/(k+1): mostly the old frame first
+            warped[start + j] = cv2.addWeighted(warped[start + j], a, prev_last, 1.0 - a, 0)
+    end = min(len(warped) - 1, max(0, int(round(a1 * i['fps'])) - 1))
+    prev_last = warped[end]
     inter = os.path.join(tmp, f'v{idx}.mkv')
     wr = cv2.VideoWriter(inter, cv2.VideoWriter_fourcc(*'FFV1'), i['fps'], (W, H))
     # BORDER_REPLICATE turned the out-of-bounds margin into vertical streaks; mirror instead,
     # then drop a small margin so nothing stretched survives
-    for fr in i['frames']:
-        wr.write(cv2.warpAffine(fr, M, (W, H), flags=cv2.INTER_CUBIC,
-                                borderMode=cv2.BORDER_REPLICATE))
+    for fr in warped:
+        wr.write(fr)
     wr.release()
     part = os.path.join(tmp, f'p{idx}.mp4')
-    a0, a1 = speech_bounds(i['path'])
+    expected += max(0.0, a1 - a0)
     print(f'  part{idx}: speech {a0:.2f}-{a1:.2f}s of the clip')
     subprocess.run([FFMPEG, '-y', '-v', 'error', '-ss', f'{a0:.3f}', '-to', f'{a1:.3f}', '-i', inter,
                     '-ss', f'{a0:.3f}', '-to', f'{a1:.3f}', '-i', i['path'],
@@ -147,4 +168,5 @@ with open(lst, 'w', encoding='utf-8') as f:
 subprocess.run([FFMPEG, '-y', '-v', 'error', '-f', 'concat', '-safe', '0', '-i', lst,
                 '-c:v', 'libx264', '-crf', CRF, '-pix_fmt', 'yuv420p',
                 '-c:a', 'aac', '-b:a', '192k', out], check=True)
+print(f'EXPECTED {expected:.3f}')
 print('OUTPUT', out)
