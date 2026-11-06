@@ -21,6 +21,7 @@ usage: produce_hires.py <episode.json> <voice.pt> <workdir> [draft_w] [draft_h]
 env: HIRES_ONLY=L07,L08  HIRES_REUSE=1  HIRES_RETRIES=2  HIRES_W=1600  HIRES_H=928
      HIRES_CHAIN=video|frame|off  HIRES_RETRY_LINE=2  HIRES_UNTIL=L03
      HIRES_CLEAN=1 (drop drafts/latents after the final check), HIRES_KEEP_REFINED=1
+     HIRES_SAGE=1 (SageAttention, measured -28% per clip with no quality change)
      COMFY_URL, COMFY_OUTPUT, COMFY_RESTART, HIRES_PORTRAIT
 """
 import hashlib, json, os, subprocess, sys, time, urllib.request
@@ -38,6 +39,9 @@ REUSE = os.environ.get('HIRES_REUSE', '1') == '1'
 # 2.29. Video continuation costs 2.4x render time (862 s vs 360 s per clip).
 CHAIN = os.environ.get('HIRES_CHAIN', 'video')
 FORCE = os.environ.get('COMFY_FORCE', '1') == '1'
+# Measured on L03 (158 frames, 1600x928): draft 421->330 s, refine 721->491 s, quality unchanged
+# (sharp 279->269 / 160->161). Needs the SageAttention wheel built for ComfyUI's interpreter.
+SAGE = os.environ.get('HIRES_SAGE', '1') == '1'
 PROMPT = os.environ.get('HIRES_PROMPT',
                         'A man speaks directly to the camera in a warm study lined with bookshelves. '
                         'He sits still with his hands out of frame, no gestures. '
@@ -347,7 +351,8 @@ def render_line(ln):
             seed = 3 + attempt * 11
             env = dict(os.environ, H3_LENGTH=str(frames), H3_STEPS='8', H3_SEED=str(seed),
                        H3_UNET=UNET, H3_CLIP=CLIP, H3_VAE=VAE, H3_AVAE=AVAE,
-                       H3_LORA=DRAFT_LORA, H3_SAVE_LATENT=f'hi_{tag}')
+                       H3_LORA=DRAFT_LORA, H3_SAVE_LATENT=f'hi_{tag}',
+                       H3_SAGE='1' if SAGE else '0')
             if CHAIN == 'video' and prev_clip:
                 env['H3_REF_VIDEO'] = prev_clip
             elif CHAIN == 'frame' and prev_frame:
@@ -379,7 +384,8 @@ def render_line(ln):
         if not ensure_comfy():
             raise StepError(f'{tag}: ComfyUI unavailable for refine')
         r = run([py, os.path.join(here, 'refine_deno.py'), vlat, alat, ln['image'], wav,
-                 refined_dir, UW, UH], what=f'{tag} refine')
+                 refined_dir, UW, UH],
+                dict(os.environ, H3_SAGE='1' if SAGE else '0'), what=f'{tag} refine')
         got = (last_json(r.stdout).get('files') or [None])[0]
         if got:
             info = verify(got, f'{tag} refined')

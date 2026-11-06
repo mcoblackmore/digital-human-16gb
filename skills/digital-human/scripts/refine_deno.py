@@ -61,6 +61,13 @@ g = {
         "pingpong": False, "save_output": True}},
 }
 
+if os.environ.get('H3_SAGE', '0') == '1':
+    # same patch the draft uses; placed after the LoRA so the sampler sees the patched model
+    src = g["guider"]["inputs"]["model"]
+    g["sage"] = {"class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch", "inputs": {"model": src}}
+    g["guider"]["inputs"]["model"] = ["sage", 0]
+    g["sched"]["inputs"]["model"] = ["sage", 0]
+
 t0 = time.time()
 print(f'deno refine {W}x{H} steps {TOTAL}->{TOTAL-SPLIT} (split {SPLIT})', flush=True)
 e = comfy.run(g, poll=10)

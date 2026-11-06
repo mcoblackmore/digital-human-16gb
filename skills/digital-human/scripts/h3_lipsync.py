@@ -83,6 +83,8 @@ if UP_W and UP_H:
         "latent": ["ks", 0], "upscale_model": UP_MODEL, "width": UP_W, "height": UP_H}}
     g["dec"]["inputs"]["samples"] = ["up", 0]
 
+SAGE = os.environ.get('H3_SAGE', '0') == '1'
+
 if LORA:
     # LORA may hold several names separated by ';' — they are chained
     prev = ["unet", 0]
@@ -92,6 +94,13 @@ if LORA:
             "model": prev, "lora_name": name, "strength_model": 1.0}}
         prev = [node, 0]
     g["sync"]["inputs"]["model"] = prev
+
+if SAGE:
+    # MiniMax-H3-specific SageAttention patch (KJNodes). Must sit after the LoRA chain and
+    # before the sampler, which is where the model is finally consumed.
+    src = g["sync"]["inputs"]["model"]
+    g["sage"] = {"class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch", "inputs": {"model": src}}
+    g["sync"]["inputs"]["model"] = ["sage", 0]
 
 t0 = time.time()
 print(f'H3 ref2va+AudioSync {W}x{H}, {LEN} frames, {STEPS} steps cfg {CFG}, lora={LORA}', flush=True)

@@ -21,7 +21,7 @@
 | 01b | 8 步草稿 + 瓦片 1 步（无 LoRA） | 视频2 | ❌ 否决 | 561 s | 锐度 91.9 ✗ |
 | 01c | 8 步草稿 + 瓦片 2 步（无 LoRA） | 视频2 | ❌ 否决 | 811 s | 锐度 98.8 ✗ |
 | 01d | 8 步草稿 + 瓦片 2 步 + LoRA | 视频2 修正 | ❌ 否决 | 891 s | 锐度 145.3 ✗ |
-| 02 | SageAttention | 视频1 | 待做 | — | — |
+| 02 | **SageAttention** | 视频1 | ✅ **采纳，已设为默认** | 每段 −28% | 无变化 |
 | 03 | 15 秒长段 + 瓦片 | 视频2 的正确用法 | 待做 | — | — |
 
 ## 01 的实测细节（L03，6.24 秒，158 帧）
@@ -43,6 +43,22 @@
 
 **瓦片的正确用法**：跑 **15 秒长段**，把 1 分钟片子的段数从 15–18 降到 4，接缝少 4 倍。这是下一步要验证的（实验 03）。
 
+## 02 SageAttention 实测（L03，158 帧）
+
+编译方式：用 ComfyUI 自己的 `python_embeded` 编译（py3.13 / torch 2.11+cu130 / CUDA 13.1 / VS2022），
+`python -m build --wheel --no-isolation --skip-dependency-check` 绕过 setuptools 版本检查。
+装进 `python_embeded` 后 `import sageattention` + `sageattn()` 实机通过。
+
+| 环节 | 基线 | +Sage | 变化 | 锐度变化 |
+|---|---|---|---|---|
+| 草稿 8 步 158 帧 | 421 s | **330 s** | −22% | 279.1 → 268.6（−4%，噪声内） |
+| 精修 2 步 1600×928 | 721 s | **491 s** | **−32%** | 160.0 → 161.2（+1%） |
+| **每段合计** | **1142 s** | **821 s** | **−28%** | 无实质变化 |
+
+接入点：`h3_lipsync.py` 与 `refine_deno.py` 的 `H3_SAGE=1`，节点为 KJNodes 的
+`MiniMaxH3MemoryEfficientSageAttentionPatch`（H3 专用），插在 LoRA 之后、采样器之前。
+`produce_hires.py` 已默认开启（`HIRES_SAGE=1`）。
+
 ## 环境改动记录
 
 | 改动 | 原因 |
@@ -51,3 +67,6 @@
 | 下载 `pika_h3_flex_ref2va_comfy_bf16.safetensors`（1.82 GB） | 视频2 的 6 步 LoRA；HuggingFace 直连不通，走 hf-mirror.com |
 | 新增 `start_comfy5.ps1` | 原启动脚本不重定向输出，崩溃时看不到堆栈；已两次死于加载 21 GB 模型时的 access violation |
 | 新增 `scripts/refine_tiled.py` | 瓦片精修，`H3_REFINER` 可留空（Deno 配方）或填入（加回细节） |
+| 编译安装 `sageattention 2.2.0` | 从 sjh00/SageAttention_Windows 编译；原先装的 `+cu130torch2.10.0andhigher.post6` 被替换 |
+| 删除 LTX 模型 16 个（11.45 GB） | 用户不用 LTX；保留 `ltx-2.3-spatial-upscaler-x2-1.1`（脚本有默认引用） |
+| 删除 `minimax_h3_fl2va_int8_convrot`（31.7 GB） | 完整版 fl2va，16 GB 显存跑不动；保留剪枝版 |
