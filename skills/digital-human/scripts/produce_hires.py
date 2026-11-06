@@ -20,6 +20,7 @@ static portrait.
 usage: produce_hires.py <episode.json> <voice.pt> <workdir> [draft_w] [draft_h]
 env: HIRES_ONLY=L07,L08  HIRES_REUSE=1  HIRES_RETRIES=2  HIRES_W=1600  HIRES_H=928
      HIRES_CHAIN=video|frame|off  HIRES_RETRY_LINE=2  HIRES_UNTIL=L03
+     HIRES_CLEAN=1 (drop drafts/latents after the final check), HIRES_KEEP_REFINED=1
      COMFY_URL, COMFY_OUTPUT, COMFY_RESTART, HIRES_PORTRAIT
 """
 import hashlib, json, os, subprocess, sys, time, urllib.request
@@ -214,6 +215,41 @@ def last_frame_of(path, out_png):
     return out_png if os.path.exists(out_png) else None
 
 
+def cleanup(keep_refined=True, keep=None):
+    """Delete this run's intermediates once the final video has been verified.
+
+    Kept: the episode, the per-line refined clips (re-joining is cheap, re-rendering is not),
+    the manifest and the TTS wavs. Removed: draft renders, the ComfyUI latents that were only
+    needed by the refine step, and the chaining frames.
+    """
+    import glob as _glob
+    patterns = [os.path.join(draft_dir, '*.mp4'),
+                os.path.join(OUTDIR, 'hi_L*.latent'),
+                os.path.join(frames_dir, '*.png'),
+                os.path.join(work, 'failcount.txt'),
+                os.path.join(work, 'STOP.txt'),
+                os.path.join(work, 'refined_manifest_backup.json')]
+    if not keep_refined:
+        patterns.append(os.path.join(refined_dir, '*.mp4'))
+    else:
+        # refined/ accumulates clips from every earlier run; keep only the ones this episode uses
+        used = {os.path.abspath(v) for v in (keep or {}).values()}
+        for f in _glob.glob(os.path.join(refined_dir, '*.mp4')):
+            if os.path.abspath(f) not in used:
+                patterns.append(f)
+    freed = 0
+    n = 0
+    for pat in patterns:
+        for f in _glob.glob(pat):
+            try:
+                freed += os.path.getsize(f)
+                os.remove(f)
+                n += 1
+            except OSError:
+                pass
+    print(f'cleanup: removed {n} files, {freed / 1e6:.1f} MB', flush=True)
+
+
 def preflight(lines):
     problems = []
     need = [(UNET, 'diffusion_models'), (CLIP, 'text_encoders'), (VAE, 'vae'),
@@ -405,4 +441,7 @@ if exp is not None and abs(info['duration'] - exp) > 1.0:
     raise StepError(f'join duration mismatch: {info["duration"]:.2f} vs expected {exp:.2f}')
 if exp is None:
     raise StepError('join did not report EXPECTED duration')
+
+if os.environ.get('HIRES_CLEAN', '1') == '1':
+    cleanup(keep_refined=os.environ.get('HIRES_KEEP_REFINED', '1') == '1', keep=done)
 print(f'TOTAL {time.time() - t_all:.0f}s', flush=True)
