@@ -93,20 +93,57 @@ description: 用开源模型在本地做一个 AI 数字人主播：用文字写
    H3_SAVE_LATENT=deno_L01
    python h3_lipsync.py 定稿.png 配音.wav draft/ "英文提示词" 896 512
    ```
-   实测 **330 秒**。`H3_SAVE_LATENT` 会把 H3 的 AV latent 拆成 `*_video` / `*_audio` 两个 `.latent` 存到 ComfyUI/output（直接存整个 AV latent 会报 `'NestedTensor' object has no attribute 'contiguous'`）。
+   实测 **330 秒**（未开 Sage；开 Sage 后约 −22%）。`H3_SAVE_LATENT` 会把 H3 的 AV latent 拆成 `*_video` / `*_audio` 两个 `.latent` 存到 ComfyUI/output（直接存整个 AV latent 会报 `'NestedTensor' object has no attribute 'contiguous'`）。
 2. **精修**（1.8× latent + 2 步 + 音频屏蔽）：
    ```
    H3_UNET=MiniMax-H3_DenoMix_ref2va_pruned_int8_v3.safetensors
    H3_REFINER=minimax_h3_open_regenerate_2k_refiner_rank_16_bf16.safetensors
    python refine_deno.py <draft>_video_*.latent <draft>_audio_*.latent 定稿.png 配音.wav refined/ 1600 928
    ```
-   实测 **531 秒**，峰值显存 12 GB。成片 1600×928，眼睛正常。
+   实测 **531 秒**（未开 Sage；开 Sage 后约 −32%），峰值显存 12 GB。成片 1600×928，眼睛正常。
 3. **三个必须对齐的细节**（少一个就失败）：
    - **精修只跑 2 步**：`BasicScheduler(simple, 8, 1)` → `SplitSigmas(step=6)` → 取**输出槽 1**（低噪声段）。取槽 0 是从头重画，出来是纯噪声。
    - **音频 latent 用 `SolidMask(0)` + `SetLatentNoiseMask` 屏蔽**，只让画面参与重采样；不屏蔽会把音频也重画，还会多占显存。
    - **草稿必须是 896×512 / 124 帧**。1056×608 / 192 帧的草稿做 3 步全量精修会直接把 ComfyUI 打崩（注意力开销约 2.4 倍）。
 4. **更省时间的替代**：只做第 1 步（896×512 草稿 330 秒），分辨率够用就别精修。
 5. **最终放大到 1080p+**：视频作者的免费方案是 RTX VSR（`DenoRTXVFXVideoFinisher`，不到 1 分钟）；付费方案约 6 分钟。都不如上面的 latent 精修保脸。
+
+### 3A-3. SageAttention：每个环节省 22–32%（16 GB / sm89 实测）
+
+H3 的注意力是整条链路最重的开销。装上 SageAttention 后**画质不变、时间直接降**，而且和别的优化正交，可以叠加。
+
+| 环节 | 不开 | 开 Sage | 提升 | 锐度 |
+|---|---|---|---|---|
+| 草稿 8 步 158 帧 | 421 s | **330 s** | −22% | 279.1 → 268.6 |
+| 精修 2 步 1600×928 | 721 s | **491 s** | **−32%** | 160.0 → 161.2 |
+| 每段合计 | 1142 s | **821 s** | **−28%** | 无实质变化 |
+
+精修提升更大，因为它是纯大分辨率采样、注意力占比高；草稿有文本编码和 VAE 解码的固定开销摊薄了比例。
+
+**接入方式**（两个脚本都支持 `H3_SAGE=1`）：
+
+```python
+g["sage"] = {"class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch", "inputs": {"model": src}}
+```
+
+节点是 KJNodes 的 **`MiniMaxH3MemoryEfficientSageAttentionPatch`**（H3 专用，不是通用的 `PathchSageAttentionKJ`）。必须插在 **LoRA 之后、采样器之前**——采样器拿到的才是打过补丁的模型。`produce_hires.py` 默认 `HIRES_SAGE=1`。
+
+**编译（Windows + ComfyUI 便携版，实测可行）**
+
+官方 `build_wheel.bat` 会卡在依赖检查：torch 声明 `setuptools<82`，而 ComfyUI 自带 84.2.1。**不要去降级 setuptools**，直接用官方跳过参数：
+
+```bat
+call "...\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+set DISTUTILS_USE_SDK=1
+set TORCH_CUDA_ARCH_LIST=8.9
+set CUDA_HOME=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.1
+%PY% -m build --wheel --no-isolation --skip-dependency-check
+%PY% -m pip install --force-reinstall --no-deps dist\sageattention-*.whl
+```
+
+`%PY%` 必须是 ComfyUI 的 `python_embeded\python.exe`——ABI 必须和运行时完全一致。源码用 [sjh00/SageAttention_Windows](https://github.com/sjh00/SageAttention_Windows)（Windows 原生，不需要 WSL，sm89 走 CUDA 路径不需要 Triton）。
+
+**Sol-Attn 不要指望**：视频里常和 Sage 一起出现的 `ComfyUI-Sol-H3` 明确要求 **SM120/SM121 + Linux/WSL2**，在 Windows 上会静默降级成普通注意力，装了等于没装。sm89 的卡（4090、4060 Ti）用不了。
 
 ### 3B. Wan + InfiniteTalk（24 GB 以上显存）
 
