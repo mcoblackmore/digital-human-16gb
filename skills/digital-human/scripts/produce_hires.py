@@ -19,7 +19,7 @@ static portrait.
 
 usage: produce_hires.py <episode.json> <voice.pt> <workdir> [draft_w] [draft_h]
 env: HIRES_ONLY=L07,L08  HIRES_REUSE=1  HIRES_RETRIES=2  HIRES_W=1600  HIRES_H=928
-     HIRES_CHAIN=video|frame|off  HIRES_RETRY_LINE=2
+     HIRES_CHAIN=video|frame|off  HIRES_RETRY_LINE=2  HIRES_UNTIL=L03
      COMFY_URL, COMFY_OUTPUT, COMFY_RESTART, HIRES_PORTRAIT
 """
 import hashlib, json, os, subprocess, sys, time, urllib.request
@@ -253,6 +253,12 @@ lines = json.load(open(script, encoding='utf-8'))['lines']
 ONLY = set(x.strip() for x in os.environ.get('HIRES_ONLY', '').split(',') if x.strip())
 if ONLY:
     lines = [l for l in lines if f"L{int(l['id']):02d}" in ONLY]
+# stop cleanly after a given line: an external watcher that kills the process mid-render wastes
+# the clip in flight and can leave ComfyUI executing a prompt nobody collects
+UNTIL = os.environ.get('HIRES_UNTIL', '').strip()
+if UNTIL:
+    stop_at = int(UNTIL.lstrip('Ll'))
+    lines = [l for l in lines if int(l['id']) <= stop_at]
 print(f'lines={len(lines)} only={sorted(ONLY) or "all"} draft={DW}x{DH} refine={UW}x{UH} '
       f'chain={CHAIN}', flush=True)
 
@@ -377,7 +383,9 @@ for ln in lines:
     if err:
         print(f'{tag}: GIVING UP after {LINE_RETRIES + 1} attempts', flush=True)
 
-clips = [done[k] for k in sorted(done, key=lambda x: int(x.split(':')[0][1:]))]
+# join only the lines this run was asked for, in script order: the manifest can hold clips from
+# an earlier, longer run
+clips = [done[key_of(l)] for l in lines if key_of(l) in done]
 print(f'clips={len(clips)} of {len(lines)} requested', flush=True)
 if not clips:
     raise StepError('nothing refined')
