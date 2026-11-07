@@ -84,6 +84,13 @@ if UP_W and UP_H:
     g["dec"]["inputs"]["samples"] = ["up", 0]
 
 SAGE = os.environ.get('H3_SAGE', '0') == '1'
+# Motion Context chaining (ComfyUI-H3-Motion-Context). All off by default: the existing
+# pipeline must behave exactly as before unless H3_MC_* is set.
+MC_LOAD = int(os.environ.get('H3_MC_LOAD', '0') or 0)      # previous clip index, 0 = no context
+MC_SAVE = int(os.environ.get('H3_MC_SAVE', '0') or 0)      # index this clip is saved as
+MC_CTX = os.environ.get('H3_MC_CONTEXT', '22')             # pinned picture frames: 5/22/39/56
+MC_AUDIO = int(os.environ.get('H3_MC_AUDIO', '24'))        # pinned audio frames
+MC_TRIM = os.environ.get('H3_MC_TRIM', '1') == '1'         # cut the pinned head before saving
 
 if LORA:
     # LORA may hold several names separated by ';' — they are chained
@@ -95,6 +102,27 @@ if LORA:
         prev = [node, 0]
     g["sync"]["inputs"]["model"] = prev
 
+if MC_LOAD:
+    # Only chain from clip 2 on. The installed pack is an older build whose loader ignores
+    # clip_index 0 and reads the slot anyway (measured: it pulled a stale 1344x768 latent),
+    # so the first clip simply does not get the node.
+    mc = {"conditioning": ["ref", 0], "vae": ["vae", 0], "latent": ["ref", 1],
+          "context_length": MC_CTX, "audio_context_length": MC_AUDIO,
+          "context_latent": ["mcload", 0]}
+    g["mcload"] = {"class_type": "MiniMaxH3MotionContextLoadLatent",
+                   "inputs": {"latent_path": "h3_context", "clip_index": MC_LOAD}}
+    g["mc"] = {"class_type": "MiniMaxH3MotionContext", "inputs": mc}
+    g["ks"]["inputs"]["positive"] = ["mc", 0]
+    if MC_TRIM:
+        g["trim"] = {"class_type": "MiniMaxH3MotionContextTrim", "inputs": {
+            "images": ["dec", 0], "trim_frames": ["mc", 1], "audio": ["sync", 2],
+            "fps": 24.0, "match_tail": True}}
+        g["save"]["inputs"]["images"] = ["trim", 0]
+        g["save"]["inputs"]["audio"] = ["trim", 1]
+if MC_SAVE:
+    g["mcsave"] = {"class_type": "MiniMaxH3MotionContextSaveLatent", "inputs": {
+        "latent": ["ks", 0], "filename_prefix": "h3_context/clip", "clip_index": MC_SAVE}}
+
 if SAGE:
     # MiniMax-H3-specific SageAttention patch (KJNodes). Must sit after the LoRA chain and
     # before the sampler, which is where the model is finally consumed.
@@ -102,6 +130,7 @@ if SAGE:
     g["sage"] = {"class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch", "inputs": {"model": src}}
     g["sync"]["inputs"]["model"] = ["sage", 0]
 
+print(f'MC load={MC_LOAD} save={MC_SAVE} ctx={MC_CTX} audio={MC_AUDIO} trim={MC_TRIM}', flush=True)
 t0 = time.time()
 print(f'H3 ref2va+AudioSync {W}x{H}, {LEN} frames, {STEPS} steps cfg {CFG}, lora={LORA}', flush=True)
 e = comfy.run(g, poll=10)

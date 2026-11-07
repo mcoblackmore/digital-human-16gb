@@ -30,6 +30,10 @@ CROP_X = float(os.environ.get('JC_CROP_X', 0.0))   # each side, removes stretche
 TRIM = float(os.environ.get('JC_TRIM', 0.10))
 CRF = os.environ.get('JC_CRF', '15')
 XFADE = int(os.environ.get('JC_XFADE', '6'))   # frames blended into the previous clip's last frame
+# Face alignment exists to rescue clips that were generated independently. When the clips are a
+# real continuation (H3 Motion Context), both are already aligned and the warp only reintroduces
+# a jump: measured raw seam 5.75 -> 21.30 after alignment.
+ALIGN = os.environ.get('JC_ALIGN', '1') == '1'
 
 try:
     import imageio_ffmpeg
@@ -115,19 +119,26 @@ for c in clips:
 # out-of-bounds margin that any border mode renders as visible streaks or mirror copies.
 # no clamp: any cap below max(w) makes the largest clip shrink, which re-introduces the
 # out-of-bounds margin (streaks) and leaves a size mismatch between clips
-target_w = max(i['w'] for i in info)
+target_w = max(i['w'] for i in info) if ALIGN else None
 target_c = info[0]['c']
 W, H = info[0]['W'], info[0]['H']
-print(f'target face_w={target_w:.1f} at {target_c[0]:.0f},{target_c[1]:.0f}')
+if ALIGN:
+    print(f'target face_w={target_w:.1f} at {target_c[0]:.0f},{target_c[1]:.0f}')
+else:
+    print('face alignment off (clips are a real continuation)')
 
 tmp = tempfile.mkdtemp(prefix='join_')
 parts = []
 expected = 0.0
 prev_last = None
 for idx, i in enumerate(info):
-    s = target_w / i['w']
-    M = np.array([[s, 0, target_c[0] - s * i['c'][0]],
-                  [0, s, target_c[1] - s * i['c'][1]]], dtype=np.float32)
+    if ALIGN:
+        s = target_w / i['w']
+        M = np.array([[s, 0, target_c[0] - s * i['c'][0]],
+                      [0, s, target_c[1] - s * i['c'][1]]], dtype=np.float32)
+    else:
+        s = 1.0
+        M = np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32)
     a0, a1 = speech_bounds(i['path'])
     warped = [cv2.warpAffine(fr, M, (W, H), flags=cv2.INTER_CUBIC,
                              borderMode=cv2.BORDER_REPLICATE) for fr in i['frames']]
